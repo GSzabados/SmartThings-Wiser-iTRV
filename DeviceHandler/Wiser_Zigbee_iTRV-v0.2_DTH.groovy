@@ -623,7 +623,7 @@ def setHeatingSetpoint(Double degrees) {
 
 def setValveHeatingSetpoint() {
 	//if (degrees != null)
-	{
+	//{
 		/*def degreesInteger = Math.round(degrees)
 		int temp;
 		temp = (Math.round(degrees * 2)) / 2*/
