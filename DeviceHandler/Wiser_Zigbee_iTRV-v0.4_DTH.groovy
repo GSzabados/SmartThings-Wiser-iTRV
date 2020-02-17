@@ -12,7 +12,7 @@
 *
 *  Wiser Zigbee iRTV
 *
-*  Version: 0.3
+*  Version: 0.4
 *
 *  Author: gszabados
 *
@@ -21,23 +21,24 @@
 *  Based on ckpt-martin/SmartThings eCozy Zigbee Thermostat DTH
 */
 
+import groovy.json.JsonOutput
 
 metadata {
-	definition (name: "Wiser Zigbee iTRV - Update v0.3", namespace: "gszabados", author: "gszabados") {
+	definition (name: "Wiser Zigbee iTRV - Update v0.4", namespace: "gszabados", author: "gszabados", mnmn: "SmartThings", vid: "generic-radiator-thermostat") {
+		capability "Thermostat"
 		capability "Thermostat Mode"
 		capability "Refresh"
 		capability "Battery"
 		capability "Thermostat Heating Setpoint"
 		capability "Health Check"
-		capability "Thermostat"
 		capability "Temperature Measurement"
 		capability "Sensor"
 		capability "Configuration"
 
 
-		command "modeHeat"
-		command "modeOff"
-		command "modeAuto"
+//		command "modeHeat"
+//		command "modeOff"
+//		command "modeAuto"
 		command "increaseHeatSetpoint"
 		command "decreaseHeatSetpoint"
 
@@ -56,7 +57,7 @@ metadata {
 		attribute "rSSI", "number"
 
 		
-        fingerprint profileId: "0104", endpointId: "01", inClusters: " 0000,0001,0003,0020,0201,0204,0B05,FE03", outClusters: " 0000,0019", manufacturer: "Schneider Electric", model: "iTRV", mnmn: "Schneider", vid: "generic-radiator-thermostat"
+        fingerprint profileId: "0104", endpointId: "01", inClusters: " 0000,0001,0003,0020,0201,0204,0B05,FE03", outClusters: " 0000,0019", manufacturer: "Schneider Electric", model: "iTRV"
 	}
 
 	preferences {
@@ -96,9 +97,9 @@ metadata {
 				attributeState "VALUE_DOWN", action:"decreaseHeatSetpoint"
 			}
 			
-			tileAttribute("device.batteryState", key: "SECONDARY_CONTROL") {
+			tileAttribute("device.battery", key: "SECONDARY_CONTROL") {
 				attributeState("default", label:'${currentValue}%', unit:"%", icon:"st.arlo.sensor_battery_4")
-				attributeState("battery_low", label:'BATTERY LOW!', icon:"st.arlo.sensor_battery_1")
+				attributeState("1%", label:'BATTERY LOW!', icon:"st.arlo.sensor_battery_1")
 			}
 			
 			tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE") {
@@ -107,15 +108,22 @@ metadata {
 				attributeState "heating", backgroundColor:"#ffa81e", label:'Heating', icon:"st.thermostat.heat"
 			}
 			
-            tileAttribute("device.thermostatMode", key: "THERMOSTAT_MODE") {
+            tileAttribute("device.thermostatMode", key: "THERMOSTAT_MODE", supportedStates: "device.supportedThermostatModes") {
 				attributeState "auto", label:'${currentValue}', icon:"st.thermostat.heat-auto"
 				attributeState "heat", label:"heat", backgroundColor:"#ffa81e", icon:"st.thermostat.heat"
 				attributeState "off", label:"off", backgroundColor:"#1e9cbb", icon:"st.thermostat.heating-cooling-off"
 			}
-			
+            
+            
             tileAttribute("device.trvHeatingSetpoint", key: "HEATING_SETPOINT") {
 				attributeState("default", label:'${currentValue}', unit:"°C")
             }
+		}
+
+		controlTile("thermostatMode", "device.thermostatMode", "enum", width: 2 , height: 2, supportedStates: "device.supportedThermostatModes") {
+			state("off", action: "setThermostatMode", label: 'Off', icon: "st.thermostat.heating-cooling-off")
+			state("heat", action: "setThermostatMode", label: 'Heat', icon: "st.thermostat.heat")
+			state("auto", action:"setThermostatMode", label: 'Auto', icon: "st.thermostat.heat-auto")
 		}
 
        valueTile("heatingInfo", "device.tempAndSetPoint") {
@@ -219,6 +227,7 @@ def parse(String description) {
 				//log.debug "TEMP: $descMap.value"
 				map.name = "temperature"
 				map.value = getTemperature(descMap.value)
+                map.unit = getTemperatureScale()
 				if (descMap.value == "8000") // 0x8000 invalid temperature
 				{
 					map.value = "--"
@@ -229,12 +238,13 @@ def parse(String description) {
 		else if (descMap.cluster == "0001" && descMap.attrId == "0020")
 		{
 			log.debug "BATTERY VOLTAGE: $descMap.value"
-			map.name = "batteryState"
+			map.name = "battery"
+            map.unit = "%"
 			def batteryVoltage = getBatteryVoltage(descMap.value)
 			log.debug "BATTERY VOLTAGE: $batteryVoltage"
 			if (batteryVoltage < 25)
 			{
-				map.value = "battery_low"
+				map.value = "1"
 			}
 			else if (batteryVoltage == 25)
 			{
@@ -282,6 +292,7 @@ def parse(String description) {
 			log.debug "HEATING SETPOINT: $descMap.value"
 			map.name = "trvHeatingSetpoint"
 			map.value = getTemperature(descMap.value)
+            map.unit = getTemperatureScale()
 			if (descMap.value == "8000") //0x8000
 			{
 				map.value = "--"
@@ -534,13 +545,15 @@ def getSetPoint(value) {
 				// radiator is off
 				if (thermostatMode == "off")
 				{
+                	log.debug "Thermostat mode is off, temperature changed to ${radiatorTemperature}"
 					deviceTempMap.descriptionText = "Thermostat mode is off, temperature changed to ${radiatorTemperature}"
 				}
 			
 				// it's the app! raise event heatingSetpoint, with desc App
 				else
 				{
-					deviceTempMap.descriptionText = "Temperature changed by app to ${radiatorTemperature}"
+					log.debug "Temperature changed by app to ${radiatorTemperature}"
+                    deviceTempMap.descriptionText = "Temperature changed by app to ${radiatorTemperature}"
 				}
 			}
 			
@@ -549,20 +562,21 @@ def getSetPoint(value) {
 				// It's manual? raise event heatingSetpoint, with desc Manual
 				// And I think set the next to be the manual setting too. All aligned.
 				deviceTempMap.descriptionText = "Temperature changed manually to ${radiatorTemperature}"
+                log.debug "Temperature changed manually to ${radiatorTemperature}"
 				state.lastSentTemperature = radiatorTemperature
 				sendEvent(name:"heatingSetpoint", value: radiatorTemperature, unit: getTemperatureScale(), displayed: false)
 			}
-
-			if (settings.unitformat == "Fahrenheit")
-			{
-				return Math.round(celsiusToFahrenheit(celsius))
-			}
+		}
+		if (settings.unitformat == "Fahrenheit")
+		{
+			return Math.round(celsiusToFahrenheit(celsius))
+		}
 			
-			else
-			{
+		else
+		{
 			// return Math.round(celsius)
+        	log.debug "sending back $celsius"
 			return celsius
-			}
 		}
 	}
 }
@@ -622,8 +636,7 @@ def setHeatingSetpoint(Double degrees) {
 }
 
 def setValveHeatingSetpoint() {
-	//if (degrees != null)
-	//{
+	//if (degrees != null) {
 		/*def degreesInteger = Math.round(degrees)
 		int temp;
 		temp = (Math.round(degrees * 2)) / 2*/
@@ -711,22 +724,66 @@ def decreaseHeatSetpoint() {
     }
 }
 
-def modeHeat() {
-	log.debug "modeHeat"
-	sendEvent("name":"thermostatMode", "value":"heat")
-	zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x04)
+def setThermostatMode(String mode) {
+	log.debug "Setting Thermostat Mode"
+    log.debug "received mode is $mode (supported ${state.supportedThermostatModes})"
+    	def modeValue = 0x00
+	if (state.supportedThermostatModes?.contains(mode)) {
+		switch (mode) {
+			case "auto":
+				modeValue = 0x01
+				break
+			case "heat":
+				modeValue = 0x04
+				break
+			case "off":
+				modeValue = 0x00
+				break
+		}
+	} else {
+		log.debug "Unsupported mode ${mode}"
 	}
-
-def modeOff() {
-	log.debug "modeOff"
-	sendEvent("name":"thermostatMode", "value":"off")
-	zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x00)
+    
+    [
+			zigbee.writeAttribute(0x201, 0x001C, 0x30, modeValue),
+			"delay 2000",
+			zigbee.readAttribute(0x201, 0x001C)
+	]
+    
+    
+	/*if (mode == "heat")
+    {
+    	log.debug "sending heatMode"
+		zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x04)
+    }
+    else if (mode == "auto")
+    {  	
+    	log.debug "sending autoMode"
+		zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x01)
+    }
+    else if (mode == "off")
+    {  	
+    	log.debug "sending offMode"	
+		zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x00)
+    }*/
 }
 
-def modeAuto() {
+def heat() {
+	log.debug "modeHeat"
+    sendEvent(name:"thermostatMode", value:"Heat", displayed: true)
+	setThermostatMode("heat")
+	}
+
+def off() {
+	log.debug "modeOff"
+	sendEvent(name:"thermostatMode", value:"Off", displayed: true)
+	setThermostatMode("off")
+}
+
+def auto() {
 	log.debug "modeAuto"
-	sendEvent("name":"thermostatMode", "value":"auto")
-	zigbee.writeAttribute(0x201, 0x001C, 0x30, 0x01)
+	sendEvent(name:"thermostatMode", value:"Auto", displayed: true)
+	setThermostatMode("auto")
 }
 
 def configure() {
@@ -819,6 +876,21 @@ def refresh() {
 	return cmds
 }
 
+def ping() {
+	log.debug "ping called"
+	refresh()
+}
+
+def installed() {
+	log.debug "installed called"
+	sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 2 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID, offlinePingable: "1"])
+	    
+	state.supportedThermostatModes = ["auto", "heat", "off"]
+	
+	sendEvent(name: "supportedThermostatModes", value: JsonOutput.toJson(state.supportedThermostatModes), displayed: false)
+	//sendEvent(name: "heatingSetpointRange", value: heatingSetpointRange, displayed: false)
+}
+
 def updated() {
 	log.debug "updated called"
 	def tempmode = 0x00
@@ -826,7 +898,16 @@ def updated() {
 	def tempadjust = 0x00
 	def windowmode = 0x01
 	def firemode = 0x00
-
+	
+    if (device.currentValue("checkInterval") != null)
+    {
+    	log.debug "It was already installed"
+        installed()
+    }
+    else
+    {
+    	installed()
+    }
 	/* log.info "lock : $settings.lock"
 	
 	if (settings.lock == "Temperature")
@@ -940,7 +1021,8 @@ def updated() {
 		log.info "Fire Detection disabled"
 		settings.firedetect = "No"
 	}
-	
+	*/
+    
 	def cmds =
 			// zigbee.writeAttribute(0x204, 0x0001, 0x30, lockmode) +  // Lock Mode not part of Wiser TRV
 			// zigbee.readAttribute(0x204, 0x0001) +				   // Lock Mode not part of Wiser TRV
@@ -1025,9 +1107,9 @@ private List<Map> parseComplexValues(attrData) {
 		value          : tempAndSetPointText,
     ]
 
-    def temperatureEvent = createEvent(name: "temperature", value: temperature)
+    def temperatureEvent = createEvent(name: "temperature", value: temperature, unit: getTemperatureScale())
     def operatingStateEvent = createEvent(name: "thermostatOperatingState", value: thermostatOperatingState)
-    def setPointEvent = createEvent(name: "trvHeatingSetpoint", value: heatSetPoint)
+    def setPointEvent = createEvent(name: "trvHeatingSetpoint", value: heatSetPoint, unit: getTemperatureScale())
     def tempAndSetPointEvent = createEvent(name: "tempAndSetPoint", value: tempAndSetPointText, displayed: "false")
 	
 	log.debug "RESULT: $results"
@@ -1073,6 +1155,7 @@ private List<Map> parseLQIandRSSI(attrData) {
 
     return [lQIEvent, rSSIEvent]
 }
+
 
 
 private hexToSignedInt(hexVal) {
