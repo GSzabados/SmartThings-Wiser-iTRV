@@ -1094,8 +1094,17 @@ private List<Map> parseComplexValues(attrData) {
 	{
 		return []
 	}
-
-    def tempAndSetPointText = "" + temperature + "° | " + heatSetPoint + "°"
+	
+	def thermOps = ""
+	if (thermostatOperatingState != "off")
+	{
+		thermOps = "\uD83D\uDD25"
+    }
+    else if (thermostatOperatingState == "off")
+    {
+    	thermOps = "\u2744"
+    }
+    def tempAndSetPointText = "" + temperature + "° | " + heatSetPoint + "° " + thermOps
 
 	results << [
 		name           : "temperature",
